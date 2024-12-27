@@ -11,7 +11,7 @@ ls -l /lib64/libc.so.6
 输出: /lib64/libc.so.6 -> libc-2.28.so
 ```
 
-确定主操作IP， ansible 部署操作均在主操作IP进行， 示例中主操作IP为172.20.3.
+确定主操作IP， ansible 部署操作均在主操作IP进行， 示例中主操作IP为192.168.0.200
 
 ### 1.1 非sudo用户设置sudo免密登录
 
@@ -31,12 +31,12 @@ dingo    ALL=(ALL)       NOPASSWD:ALL
 ssh-keygen -f ~/.ssh/id_rsa -N '' -t rsa -q -b 2048
  
 # 将公钥copy到所有host节点， 包括本机节点
-ssh-copy-id root@172.20.3.200
-ssh-copy-id root@172.20.3.201
-ssh-copy-id root@172.20.3.202
+ssh-copy-id root@192.168.0.200
+ssh-copy-id root@192.168.0.201
+ssh-copy-id root@192.168.0.202
  
 # 测试是否免密
-ssh root@172.20.3.200
+ssh root@192.168.0.200
 ```
 
 ### 1.3 ansible安装
@@ -58,7 +58,7 @@ pip3 install pyopenssl -U
 
 ```
 # 前期文件准备：
-wget -r -nH http://172.20.3.202:9000  # 一键下载所有需要的包文件
+wget -r -nH http://192.168.0.202:9000  # 一键下载所有需要的包文件
  
 ansible_installer_centos8.sh 单独进行放置 进行ansible安装
 其他文件放置到部署包dingo-deploy/artifacts目录下
@@ -279,13 +279,13 @@ nginx_log_path: "{{ nginx_install_path }}/nginx"
 nginx_run_path: "{{ nginx_install_path }}/nginx"
  
  
-# define dingo coordinator http monitor port: 172.20.3.18:8080,172.20.3.19:8080,172.20.3.20:8080
+# define dingo coordinator http monitor port: 192.168.0.18:8080,192.168.0.19:8080,192.168.0.20:8080
 dingo_coordinator_http_monitor_port: "{{ dingo_store_coordinator_exchange_port }}"
 dingo_store_http_monitor_port: "{{ dingo_store_exchange_port }}"
 dingo_index_http_monitor_port: "{{ dingo_store_index_exchange_port }}"
 dingo_executor_http_monitor_port: "{{ jmx_prometheus_javaagent_port }}"
  
-# ['172.20.31.10:9201','172.20.31.11:9201','172.20.31.12:9201']
+# ['192.168.01.10:9201','192.168.01.11:9201','192.168.01.12:9201']
 dingo_coordinator_http_tmp_list: "{% for item in dingo_tmp_coordinator_list %} '{{item}}:{{ dingo_coordinator_http_monitor_port }}' {% endfor %}"
 dingo_coordinator_http_monitor_list: "[ {{ dingo_coordinator_http_tmp_list.split() | join(\",\") | default(\"\") }} ]"
  
@@ -309,28 +309,28 @@ dingo_executor_http_monitor_list: "[ {{ dingo_executor_http_tmp_list.split() | j
 
 ```
 # 将以上配置的部署包下载至 dingo-deploy/artifacts目录下
-wget -r -nH http://172.20.3.202:9000   一键下载所有文件， 
+wget -r -nH http://192.168.0.202:9000   一键下载所有文件， 
  
-# 下载主要文件， 也可 wget http://172.20.3.202:9000/pack_name单独下载包文件
+# 下载主要文件， 也可 wget http://192.168.0.202:9000/pack_name单独下载包文件
 dingo-store: dingo-store.tar.gz 其中dingo-store.tar.gz 为poc版本, 需要切换到旧版本ansible部署
 监控：  
-  wget http://172.20.3.202:9000/blackbox_exporter-0.16.0.linux-amd64.tar.gz  
-  wget http://172.20.3.202:9000/grafana-8.3.3.linux-amd64.tar.gz  
-  wget http://172.20.3.202:9000/node_exporter-0.18.1.linux-amd64.tar.gz  
-  wget http://172.20.3.202:9000/process-exporter-0.7.10.linux-amd64.tar.gz  
-  wget http://172.20.3.202:9000/prometheus-2.14.0.linux-amd64.tar.gz  
-  wget http://172.20.3.202:9000/pushgateway-1.0.0.linux-amd64.tar.gz
-  wget http://172.20.3.202:9000/jmx_prometheus_javaagent-0.17.2.jar
+  wget http://192.168.0.202:9000/blackbox_exporter-0.16.0.linux-amd64.tar.gz  
+  wget http://192.168.0.202:9000/grafana-8.3.3.linux-amd64.tar.gz  
+  wget http://192.168.0.202:9000/node_exporter-0.18.1.linux-amd64.tar.gz  
+  wget http://192.168.0.202:9000/process-exporter-0.7.10.linux-amd64.tar.gz  
+  wget http://192.168.0.202:9000/prometheus-2.14.0.linux-amd64.tar.gz  
+  wget http://192.168.0.202:9000/pushgateway-1.0.0.linux-amd64.tar.gz
+  wget http://192.168.0.202:9000/jmx_prometheus_javaagent-0.17.2.jar
  
 jdk:  
-  wget http://172.20.3.202:9000/jdk-8u171-linux-x64.tar.gz 
+  wget http://192.168.0.202:9000/jdk-8u171-linux-x64.tar.gz 
  
 PS:
     ansible部署现在将dingo.zip和dingo-store.tar.gz合并为dingo.tar.gz, 并提供合并脚本： 下载以上两个包后在artifacts中执行 bash merge_dingo.sh
     如果仅部署测试dingo-store.tar.gz, 也可执行 bash merge_dingo.sh  单独转换为dingo.tar.gz, 不可以单独部署dingo.zip
  
 executor:
-   wget http://172.20.3.202:9000/dingo.zip  
+   wget http://192.168.0.202:9000/dingo.zip  
  
  
 # 如果想要获取最新版本的dingo-store.tar.gz
@@ -359,10 +359,10 @@ ansible_connection=ssh
 ansible_python_interpreter=/usr/bin/python3
  
 #[add_coordinator]
-# 172.20.3.203
+# 192.168.0.203
  
 #[add_store]
-#172.20.3.203
+#192.168.0.203
  
  
 [scaling_in_dingo:children]
@@ -376,21 +376,21 @@ add_store
 172.20.61.106
  
 [store]
-# 172.20.3.201
-# 172.20.3.201 store_num=2
-# 172.20.3.201 store_num=2 disk='/home/sd1/store1 /home/sd2/store2'
+# 192.168.0.201
+# 192.168.0.201 store_num=2
+# 192.168.0.201 store_num=2 disk='/home/sd1/store1 /home/sd2/store2'
 172.20.61.101
 172.20.61.104
 172.20.61.106
  
 [document]
-# 172.20.3.201 document_num=2 disk='/home/sd1/document1 /home/sd2/document2'
+# 192.168.0.201 document_num=2 disk='/home/sd1/document1 /home/sd2/document2'
 172.20.61.101
 172.20.61.104
 172.20.61.106
  
 [index]
-# 172.20.3.201 index_num=2 disk='/home/sd1/index1 /home/sd2/index2'
+# 192.168.0.201 index_num=2 disk='/home/sd1/index1 /home/sd2/index2'
 172.20.61.101
 172.20.61.104
 172.20.61.106
@@ -563,10 +563,10 @@ Options:
 1. 先进行新机器服务部署
 # 配置inventory/hosts， 依照自己的需要打开以下两个选项
 #[add_coordinator]
-# 172.20.3.203
+# 192.168.0.203
  
 #[add_store]
-#172.20.3.203
+#192.168.0.203
  
  
 2. 执行部署新集群命令
@@ -575,24 +575,24 @@ Options:
  
 3.执行raft addpeer, 填写最新扩容的ip地址， 如果扩容多个，需要多次执行， 默认的raft端口地址为22101
 # 目前采取全部广播的方式，每次广播仅有leader节点会成功， 进行index=0和index=1两次广播
-./DingoControl install addpeer 172.20.3.203
+./DingoControl install addpeer 192.168.0.203
  
 4. 修改coor_list, 注意以下格式以","分割
-./DingoControl install coor_list "172.20.3.200:22001,172.20.3.201:22001,172.20.3.202:22001,172.20.3.203:22001"    
+./DingoControl install coor_list "192.168.0.200:22001,192.168.0.201:22001,192.168.0.202:22001,192.168.0.203:22001"    
  
  
 # 缩容
 1. 缩容命令
 # 会先将目标机器服务 停掉，然后进行其他节点广播，每次广播仅有leader节点会成功， 进行index=0和index=1两次广播
-./DingoControl install scaling_out_dingodb 172.20.3.203
+./DingoControl install scaling_out_dingodb 192.168.0.203
  
 
 # 单机器启停store或者coordinator
-./DingoControl start one_coordinator 172.20.3.203
-./DingoControl start one_store 172.20.3.203
+./DingoControl start one_coordinator 192.168.0.203
+./DingoControl start one_store 192.168.0.203
  
-./DingoControl stop one_coordinator 172.20.3.203
-./DingoControl stop one_store 172.20.3.203
+./DingoControl stop one_coordinator 192.168.0.203
+./DingoControl stop one_store 192.168.0.203
 ```
 
 ## 4 查看集群状态
@@ -608,14 +608,14 @@ E20230517 11:29:53.836163 1828522 coordinator_client.cc:320] [main] coordinator 
 I20230517 11:29:53.850924 1828526 naming_service_thread.cpp:203] brpc::policy::FileNamingService("./coor_list"): added 3
 I20230517 11:29:53.851150 1828522 coordinator_interaction.cc:64] [InitByNameService] Init channel by service_name file://./coor_list service_type=0
 I20230517 11:29:53.851306 1828522 coordinator_interaction.cc:64] [InitByNameService] Init channel by service_name file://./coor_list service_type=1
-I20230517 11:29:53.882277 1828529 coordinator_interaction.h:208] [SendRequestByService] name_service_channel_ connect with meta server finished. response errcode: 0, leader_addr: 172.20.3.201:22001
+I20230517 11:29:53.882277 1828529 coordinator_interaction.h:208] [SendRequestByService] name_service_channel_ connect with meta server finished. response errcode: 0, leader_addr: 192.168.0.201:22001
 I20230517 11:29:53.882387 1828529 coordinator_client_function_coor.cc:496] [SendGetCoordinatorMap] SendRequest status=OK
 I20230517 11:29:53.882423 1828529 coordinator_client_function_coor.cc:497] [SendGetCoordinatorMap] leader_location {
-  host: "172.20.3.202"
+  host: "192.168.0.202"
   port: 22001
 }
 auto_increment_leader_location {
-  host: "172.20.3.202"
+  host: "192.168.0.202"
   port: 22001
 }
  
@@ -628,7 +628,7 @@ E20230517 11:30:12.944561 1828534 coordinator_client.cc:320] [main] coordinator 
 I20230517 11:30:12.958177 1828539 naming_service_thread.cpp:203] brpc::policy::FileNamingService("./coor_list"): added 3
 I20230517 11:30:12.958379 1828534 coordinator_interaction.cc:64] [InitByNameService] Init channel by service_name file://./coor_list service_type=0
 I20230517 11:30:12.958513 1828534 coordinator_interaction.cc:64] [InitByNameService] Init channel by service_name file://./coor_list service_type=1
-I20230517 11:30:12.968495 1828539 coordinator_interaction.h:208] [SendRequestByService] name_service_channel_ connect with meta server finished. response errcode: 0, leader_addr: 172.20.3.202:22001
+I20230517 11:30:12.968495 1828539 coordinator_interaction.h:208] [SendRequestByService] name_service_channel_ connect with meta server finished. response errcode: 0, leader_addr: 192.168.0.202:22001
 I20230517 11:30:12.968590 1828539 coordinator_client_function_coor.cc:457] [SendGetStoreMap] SendRequest status=OK
 I20230517 11:30:12.968619 1828539 coordinator_client_function_coor.cc:459] [SendGetStoreMap] epoch: 1003
 storemap {
@@ -637,11 +637,11 @@ storemap {
     id: 1201
     state: STORE_NORMAL
     server_location {
-      host: "172.20.3.202"
+      host: "192.168.0.202"
       port: 20001
     }
     raft_location {
-      host: "172.20.3.202"
+      host: "192.168.0.202"
       port: 20101
     }
     keyring: "TO_BE_CONTINUED"
@@ -652,11 +652,11 @@ storemap {
     id: 1101
     state: STORE_NORMAL
     server_location {
-      host: "172.20.3.200"
+      host: "192.168.0.200"
       port: 20001
     }
     raft_location {
-      host: "172.20.3.200"
+      host: "192.168.0.200"
       port: 20101
     }
     keyring: "TO_BE_CONTINUED"
@@ -667,11 +667,11 @@ storemap {
     id: 1001
     state: STORE_NORMAL
     server_location {
-      host: "172.20.3.201"
+      host: "192.168.0.201"
       port: 20001
     }
     raft_location {
-      host: "172.20.3.201"
+      host: "192.168.0.201"
       port: 20101
     }
     keyring: "TO_BE_CONTINUED"
@@ -693,7 +693,7 @@ E20230517 11:34:04.153780 1828620 coordinator_client.cc:320] [main] coordinator 
 I20230517 11:34:04.167536 1828630 naming_service_thread.cpp:203] brpc::policy::FileNamingService("./coor_list"): added 3
 I20230517 11:34:04.167704 1828620 coordinator_interaction.cc:64] [InitByNameService] Init channel by service_name file://./coor_list service_type=0
 I20230517 11:34:04.167815 1828620 coordinator_interaction.cc:64] [InitByNameService] Init channel by service_name file://./coor_list service_type=1
-W20230517 11:34:04.174784 1828630 coordinator_interaction.h:199] [SendRequestByService] name_service_channel_ connect with meta server success by service name, connected to: 172.20.3.201:22001 found new leader: 172.20.3.202:22001
+W20230517 11:34:04.174784 1828630 coordinator_interaction.h:199] [SendRequestByService] name_service_channel_ connect with meta server success by service name, connected to: 192.168.0.201:22001 found new leader: 192.168.0.202:22001
 I20230517 11:34:04.202661 1828628 coordinator_client_function_meta.cc:314] [SendCreateTable] SendRequest status=OK
 I20230517 11:34:04.202737 1828628 coordinator_client_function_meta.cc:315] [SendCreateTable] table_id {
   entity_type: ENTITY_TYPE_TABLE
