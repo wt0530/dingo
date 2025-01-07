@@ -25,6 +25,7 @@ import io.dingodb.calcite.rel.DingoDiskAnnStatus;
 import io.dingodb.calcite.rel.DingoDocument;
 import io.dingodb.calcite.rel.DingoExportData;
 import io.dingodb.calcite.rel.DingoFilter;
+import io.dingodb.calcite.rel.DingoForUpdate;
 import io.dingodb.calcite.rel.DingoFunctionScan;
 import io.dingodb.calcite.rel.DingoGetByIndex;
 import io.dingodb.calcite.rel.DingoGetByIndexMerge;
@@ -135,4 +136,6 @@ public interface DingoRelVisitor<T> {
     T visit(@NonNull DingoDiskAnnBuild dingoDiskAnnBuild);
 
     T visit(@NonNull DingoDiskAnnLoad dingoDiskAnnLoad);
+
+    T visit(@NonNull DingoForUpdate dingoForUpdate);
 }

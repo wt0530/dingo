@@ -39,6 +39,8 @@ public class SqlSelect extends org.apache.calcite.sql.SqlSelect {
 
     long flashBackTso;
 
+    boolean forUpdate;
+
     public SqlSelect(SqlParserPos pos,
                      @Nullable SqlNodeList keywordList,
                      SqlNodeList selectList,
@@ -69,7 +71,8 @@ public class SqlSelect extends org.apache.calcite.sql.SqlSelect {
                      ExportOptions exportOptions,
                      boolean flashbackQuery,
                      String flashBackStr,
-                     String flashBackTsoStr) {
+                     String flashBackTsoStr,
+                     boolean forUpdate) {
         super(pos, keywordList, selectList, from, where, groupBy, having, windowDecls, orderBy, offset, fetch, hints);
         this.exportOptions =  exportOptions;
         this.flashBackQuery = flashbackQuery;
@@ -77,6 +80,7 @@ public class SqlSelect extends org.apache.calcite.sql.SqlSelect {
         if (flashBackTsoStr != null) {
             this.flashBackTso = Long.parseLong(flashBackTsoStr);
         }
+        this.forUpdate = forUpdate;
     }
 
     public SqlSelect(SqlParserPos pos,

@@ -27,6 +27,7 @@ import io.dingodb.common.type.TupleMapping;
 import io.dingodb.exec.expr.SqlExpr;
 import io.dingodb.meta.entity.Table;
 import lombok.Getter;
+import lombok.Setter;
 
 @Getter
 @JsonTypeName("txnGet")
@@ -44,6 +45,8 @@ public class TxnGetByKeysParam extends FilterProjectParam {
     private final long timeOut;
     @JsonProperty("isSelect")
     private final boolean isSelect;
+    @Setter
+    private boolean forUpdate;
 
     public TxnGetByKeysParam(
         CommonId tableId,

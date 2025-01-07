@@ -35,6 +35,7 @@ import io.dingodb.exec.base.Task;
 import io.dingodb.exec.dag.Edge;
 import io.dingodb.exec.dag.Vertex;
 import io.dingodb.exec.operator.params.EmptySourceParam;
+import io.dingodb.exec.operator.params.ForUpdateParam;
 import io.dingodb.exec.operator.params.GetByKeysParam;
 import io.dingodb.exec.operator.params.GetDistributionParam;
 import io.dingodb.exec.operator.params.TxnGetByKeysParam;
@@ -50,6 +51,7 @@ import java.util.List;
 import java.util.NavigableMap;
 
 import static io.dingodb.exec.utils.OperatorCodeUtils.EMPTY_SOURCE;
+import static io.dingodb.exec.utils.OperatorCodeUtils.FOR_UPDATE;
 import static io.dingodb.exec.utils.OperatorCodeUtils.GET_BY_KEYS;
 import static io.dingodb.exec.utils.OperatorCodeUtils.GET_DISTRIBUTION;
 import static io.dingodb.exec.utils.OperatorCodeUtils.TXN_GET_BY_KEYS;
@@ -61,7 +63,7 @@ public final class DingoGetByKeysFun {
     @NonNull
     public static List<Vertex> visit(
         Job job, IdGenerator idGenerator, Location currentLocation, DingoJobVisitor visitor,
-        ITransaction transaction, @NonNull DingoGetByKeys rel
+        ITransaction transaction, @NonNull DingoGetByKeys rel, boolean forUpdate
     ) {
         final TableInfo tableInfo = MetaServiceUtils.getTableInfo(visitor.getPointTs(), rel.getTable());
         final NavigableMap<ByteArrayUtils.ComparableByteArray, RangeDistribution> distributions
@@ -112,7 +114,37 @@ public final class DingoGetByKeysFun {
                 transaction.getLockTimeOut(),
                 visitor.getKind() == SqlKind.SELECT
             );
+            param.setForUpdate(forUpdate);
             getVertex = new Vertex(TXN_GET_BY_KEYS, param);
+            if (forUpdate && transaction.isOptimistic()) {
+                task = job.getOrCreate(currentLocation, idGenerator);
+                OutputHint hint = new OutputHint();
+                getVertex.setHint(hint);
+                getVertex.setId(idGenerator.getOperatorId(task.getId()));
+                Edge edge = new Edge(distributionVertex, getVertex);
+                distributionVertex.addEdge(edge);
+                getVertex.addIn(edge);
+                task.putVertex(getVertex);
+
+                ForUpdateParam forUpdateParam = new ForUpdateParam(
+                    tableInfo.getId(),
+                    td.tupleType(),
+                    null,
+                    transaction.getStartTs(),
+                    0,
+                    transaction.getIsolationLevel(),
+                    transaction.getLockTimeOut(),
+                    visitor.isScan() && !task.getBachTask(),
+                    td);
+                Vertex forUpdateVertex = new Vertex(FOR_UPDATE, forUpdateParam);
+                forUpdateVertex.setId(idGenerator.getOperatorId(task.getId()));
+                Edge getEdge = new Edge(getVertex, forUpdateVertex);
+                getVertex.addEdge(getEdge);
+                forUpdateVertex.addIn(getEdge);
+                task.putVertex(forUpdateVertex);
+                outputs.add(forUpdateVertex);
+                return outputs;
+            }
         } else {
             GetByKeysParam param = new GetByKeysParam(tableInfo.getId(), td.tupleType(), td.version,
                 td.keyMapping(), SqlExprUtils.toSqlExpr(rel.getFilter()), rel.getSelection(), td

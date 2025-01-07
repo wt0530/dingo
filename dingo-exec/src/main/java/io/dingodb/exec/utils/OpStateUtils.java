@@ -33,7 +33,8 @@ public final class OpStateUtils {
     }
 
     public static boolean allowOpContinue(String op, SchemaState schemaState) {
-        if ("insert".equalsIgnoreCase(op) || "update".equalsIgnoreCase(op)) {
+        // select op is used in the case of 'select... for update'
+        if ("insert".equalsIgnoreCase(op) || "update".equalsIgnoreCase(op) || "select".equalsIgnoreCase(op)) {
             return allowWrite(schemaState);
         } else if ("delete".equalsIgnoreCase(op)) {
             return allowDeleteOnly(schemaState);

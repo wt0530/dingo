@@ -1434,7 +1434,7 @@ SqlNode SqlSelect() :
             new SqlNodeList(selectList, Span.of(selectList).pos()),
             fromClause, where, groupBy, having, windowDecls, null, null, null,
             new SqlNodeList(hints, getPos()),
-            exportOptions, flashbackQuery, flashBackStr, flashBackTsoStr);
+            exportOptions, flashbackQuery, flashBackStr, flashBackTsoStr, forUpdate);
     }
 }
 

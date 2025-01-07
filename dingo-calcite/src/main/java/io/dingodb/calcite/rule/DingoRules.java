@@ -110,6 +110,9 @@ public final class DingoRules {
     public static final DingoExportDataRule EXPORT_DATA_RULE =
         DingoExportDataRule.DEFAULT.toRule(DingoExportDataRule.class);
 
+    public static final DingoForUpdateRule FOR_UPDATE_RULE =
+        DingoForUpdateRule.DEFAULT.toRule(DingoForUpdateRule.class);
+
     public static final DingoWithoutPriModifyRule WITHOUT_PRI_DELETE_RULE =
         DingoWithoutPriModifyRule.Config.DELETE.toRule();
 
@@ -223,6 +226,7 @@ public final class DingoRules {
         FILTER_SUB_QUERY_TO_CORRELATE,
         JOIN_SUB_QUERY_TO_CORRELATE,
         EXPORT_DATA_RULE,
+        FOR_UPDATE_RULE,
         WITHOUT_PRI_DELETE_RULE,
         WITHOUT_PRI_UPDATE_RULE,
         DINGO_VECTOR_PROJECT_RULE,

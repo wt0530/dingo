@@ -25,6 +25,7 @@ import io.dingodb.calcite.rel.DingoDiskAnnStatus;
 import io.dingodb.calcite.rel.DingoDocument;
 import io.dingodb.calcite.rel.DingoExportData;
 import io.dingodb.calcite.rel.DingoFilter;
+import io.dingodb.calcite.rel.DingoForUpdate;
 import io.dingodb.calcite.rel.DingoFunctionScan;
 import io.dingodb.calcite.rel.DingoGetByIndex;
 import io.dingodb.calcite.rel.DingoGetByIndexMerge;
@@ -66,6 +67,7 @@ import io.dingodb.calcite.visitor.function.DingoDocumentStreamingVisitFun;
 import io.dingodb.calcite.visitor.function.DingoDocumentVisitFun;
 import io.dingodb.calcite.visitor.function.DingoExportDataVisitFun;
 import io.dingodb.calcite.visitor.function.DingoFilterVisitFun;
+import io.dingodb.calcite.visitor.function.DingoForUpdateVisitFun;
 import io.dingodb.calcite.visitor.function.DingoFunctionScanVisitFun;
 import io.dingodb.calcite.visitor.function.DingoGetByIndexMergeVisitFun;
 import io.dingodb.calcite.visitor.function.DingoGetByIndexVisitFun;
@@ -134,8 +136,11 @@ public class DingoJobVisitor implements DingoRelVisitor<Collection<Vertex>> {
     @Getter
     private long pointTs;
 
-    private DingoJobVisitor(Job job, IdGenerator idGenerator, Location currentLocation,
-                            ITransaction transaction, SqlKind kind, ExecuteVariables executeVariables, long pointTs) {
+    @Getter
+    private boolean forUpdate;
+
+    private DingoJobVisitor(Job job, IdGenerator idGenerator, Location currentLocation, ITransaction transaction,
+                            SqlKind kind, ExecuteVariables executeVariables, long pointTs, boolean forUpdate) {
         this.job = job;
         this.idGenerator = idGenerator;
         this.currentLocation = currentLocation;
@@ -143,6 +148,7 @@ public class DingoJobVisitor implements DingoRelVisitor<Collection<Vertex>> {
         this.kind = kind;
         this.executeVariables = executeVariables;
         this.pointTs = pointTs;
+        this.forUpdate = forUpdate;
     }
 
     public static void renderJob(JobManager jobManager, Job job, RelNode input, Location currentLocation) {
@@ -154,16 +160,16 @@ public class DingoJobVisitor implements DingoRelVisitor<Collection<Vertex>> {
                                  boolean checkRoot, ITransaction transaction, SqlKind kind,
                                  ExecuteVariables executeVariables) {
         renderJob(jobManager, job, input, currentLocation, checkRoot, transaction, kind,
-            executeVariables, 0);
+            executeVariables, 0, false);
     }
 
     public static void renderJob(JobManager jobManager, Job job, RelNode input, Location currentLocation,
                                  boolean checkRoot, ITransaction transaction, SqlKind kind,
-                                 ExecuteVariables executeVariables, long pointTs) {
+                                 ExecuteVariables executeVariables, long pointTs, boolean forUpdate) {
         try {
             IdGenerator idGenerator = new IdGeneratorImpl(job.getJobId().seq);
             DingoJobVisitor visitor = new DingoJobVisitor(
-                job, idGenerator, currentLocation, transaction, kind, executeVariables, pointTs
+                job, idGenerator, currentLocation, transaction, kind, executeVariables, pointTs, forUpdate
             );
             Collection<Vertex> outputs = dingo(input).accept(visitor);
             if (checkRoot && !outputs.isEmpty()) {
@@ -202,7 +208,7 @@ public class DingoJobVisitor implements DingoRelVisitor<Collection<Vertex>> {
 
     @Override
     public Collection<Vertex> visit(@NonNull DingoTableModify rel) {
-        return DingoTableModifyVisitFun.visit(job, idGenerator, currentLocation, transaction, this, rel);
+        return DingoTableModifyVisitFun.visit(job, idGenerator, currentLocation, transaction, this, rel, forUpdate);
     }
 
     @Override
@@ -228,7 +234,7 @@ public class DingoJobVisitor implements DingoRelVisitor<Collection<Vertex>> {
 
     @Override
     public Collection<Vertex> visit(@NonNull DingoGetByKeys rel) {
-        return DingoGetByKeysFun.visit(job, idGenerator, currentLocation, this, transaction, rel);
+        return DingoGetByKeysFun.visit(job, idGenerator, currentLocation, this, transaction, rel, forUpdate);
     }
 
     @Override
@@ -328,6 +334,11 @@ public class DingoJobVisitor implements DingoRelVisitor<Collection<Vertex>> {
 
     public Collection<Vertex> visit(@NonNull IndexRangeScan rel) {
         return DingoIndexRangeScanVisitFun.visit(job, idGenerator, currentLocation, this, transaction, rel);
+    }
+
+    @Override
+    public Collection<Vertex> visit(@NonNull DingoForUpdate rel) {
+        return DingoForUpdateVisitFun.visit(job, idGenerator, currentLocation, this, transaction, rel, forUpdate);
     }
 
     @Override

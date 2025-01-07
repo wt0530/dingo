@@ -51,12 +51,14 @@ import io.dingodb.calcite.grammar.dql.FlashBackSqlIdentifier;
 import io.dingodb.calcite.grammar.dql.SqlBackUpTimePoint;
 import io.dingodb.calcite.grammar.dql.SqlBackUpTsoPoint;
 import io.dingodb.calcite.grammar.dql.SqlNextAutoIncrement;
+import io.dingodb.calcite.grammar.dql.SqlSelect;
 import io.dingodb.calcite.grammar.dql.SqlShow;
 import io.dingodb.calcite.grammar.dql.SqlStartGc;
 import io.dingodb.calcite.meta.DingoRelMetadataProvider;
 import io.dingodb.calcite.program.DecorrelateProgram;
 import io.dingodb.calcite.rel.DingoCost;
 import io.dingodb.calcite.rel.LogicalExportData;
+import io.dingodb.calcite.rel.LogicalForUpdate;
 import io.dingodb.calcite.rel.logical.LogicalDingoRoot;
 import io.dingodb.calcite.rule.DingoRules;
 import io.dingodb.calcite.runtime.DingoResource;
@@ -82,6 +84,7 @@ import org.apache.calcite.config.Lex;
 import org.apache.calcite.plan.ConventionTraitDef;
 import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.RelOptRule;
+import org.apache.calcite.plan.RelOptTable;
 import org.apache.calcite.plan.RelTraitSet;
 import org.apache.calcite.plan.ViewExpanders;
 import org.apache.calcite.plan.volcano.AbstractConverter;
@@ -266,7 +269,7 @@ public class DingoParser {
             );
 
             if (needExport(sqlNode)) {
-                io.dingodb.calcite.grammar.dql.SqlSelect sqlSelect = (io.dingodb.calcite.grammar.dql.SqlSelect) sqlNode;
+                SqlSelect sqlSelect = (SqlSelect) sqlNode;
                 validatorExportParam(sqlSelect.getExportOptions());
                 relNode = new LogicalExportData(
                     cluster,
@@ -283,27 +286,45 @@ public class DingoParser {
                     context.getTimeZone()
                 );
             }
+            if (forUpdate(sqlNode)) {
+                SqlSelect sqlSelect = (SqlSelect) sqlNode;
+                relNode = new LogicalForUpdate(
+                    cluster,
+                    planner.emptyTraitSet(),
+                    relRoot.rel,
+                    Objects.requireNonNull(
+                        sqlValidator.getNamespace(Objects.requireNonNull(sqlSelect.getFrom()))).getTable().unwrap(RelOptTable.class)
+                );
+            }
         }
         // Insert a `DingoRoot` to collect the results.
         return relRoot.withRel(new LogicalDingoRoot(cluster, planner.emptyTraitSet(), relNode, selection));
     }
 
     public static boolean needExport(@NonNull SqlNode sqlNode) {
-        if (sqlNode instanceof io.dingodb.calcite.grammar.dql.SqlSelect) {
-            io.dingodb.calcite.grammar.dql.SqlSelect sqlSelect = (io.dingodb.calcite.grammar.dql.SqlSelect) sqlNode;
+        if (sqlNode instanceof SqlSelect) {
+            SqlSelect sqlSelect = (SqlSelect) sqlNode;
             return sqlSelect.isExport();
         }
         return false;
     }
 
     public static boolean flashBackQuery(@NonNull SqlNode sqlNode) {
-        if (sqlNode instanceof io.dingodb.calcite.grammar.dql.SqlSelect) {
-            io.dingodb.calcite.grammar.dql.SqlSelect sqlSelect = (io.dingodb.calcite.grammar.dql.SqlSelect) sqlNode;
+        if (sqlNode instanceof SqlSelect) {
+            SqlSelect sqlSelect = (SqlSelect) sqlNode;
             if (sqlSelect.getFrom() instanceof FlashBackSqlIdentifier) {
                 return true;
             } else {
                 return sqlSelect.isFlashBackQuery();
             }
+        }
+        return false;
+    }
+
+    public static boolean forUpdate(@NonNull SqlNode sqlNode) {
+        if (sqlNode instanceof SqlSelect) {
+            SqlSelect sqlSelect = (SqlSelect) sqlNode;
+            return sqlSelect.isForUpdate();
         }
         return false;
     }

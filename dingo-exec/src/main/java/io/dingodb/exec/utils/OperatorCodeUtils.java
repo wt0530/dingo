@@ -102,6 +102,7 @@ public final class OperatorCodeUtils {
     public static final CommonId TXN_INDEX_RANGE_SCAN = new CommonId(CommonId.CommonType.OP, OP, 73);
 
     public static final CommonId OPTIMISTIC_ROLL_BACK = new CommonId(CommonId.CommonType.OP, OP, 74);
+    public static final CommonId FOR_UPDATE = new CommonId(CommonId.CommonType.OP, OP, 75);
 
     // sink
     public static final CommonId ROOT = new CommonId(CommonId.CommonType.OP, SINK, 80);

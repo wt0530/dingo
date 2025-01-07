@@ -615,6 +615,7 @@ public class DingoMeta extends MetaImpl {
                 LogUtils.error(log, "run job exception:{}", e, e);
                 if (transaction != null && transaction.isPessimistic() && transaction.getPrimaryKeyLock() != null
                     && isDml(signature)) {
+
                     if (e instanceof LockWaitException) {
                         return requireNonNull(
                             resolveLockWait(

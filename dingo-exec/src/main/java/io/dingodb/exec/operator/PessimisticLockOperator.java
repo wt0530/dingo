@@ -326,6 +326,10 @@ public class PessimisticLockOperator extends SoleOutOperator {
                         localStore.put(new KeyValue(rollBackKey, null));
                     }
                 }
+                if (param.isForUpdate()) {
+                    byte[] rollBackKey = getKeyByOp(CommonId.CommonType.TXN_CACHE_RESIDUAL_LOCK, Op.LOCK, deadLockKeyBytes);
+                    localStore.put(new KeyValue(rollBackKey, null));
+                }
                 byte[] lockKey = getKeyByOp(CommonId.CommonType.TXN_CACHE_LOCK, Op.LOCK, deadLockKeyBytes);
                 // lockKeyValue
                 KeyValue lockKeyValue = new KeyValue(lockKey, PrimitiveCodec.encodeLong(forUpdateTs));

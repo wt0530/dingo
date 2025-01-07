@@ -282,6 +282,10 @@ public class PessimisticLockDeleteOperator extends SoleOutOperator {
                 Object[] result = codec.decode(kvKeyValue);
                 vertex.getOutList().forEach(o -> o.transformToNext(context, result));
             } else {
+                byte[] rollBackKey = getKeyByOp(CommonId.CommonType.TXN_CACHE_RESIDUAL_LOCK, Op.LOCK, lockKeyBytes);
+                if (localStore.get(rollBackKey) != null) {
+                    localStore.delete(rollBackKey);
+                }
                 @Nullable Object[] finalTuple1 = tuple;
                 vertex.getOutList().forEach(o -> o.transformToNext(context, finalTuple1));
             }

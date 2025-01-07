@@ -59,6 +59,7 @@ public final class TxnGetByKeysOperator extends FilterProjectOperator {
         CommonId partId = context.getDistribution().getId();
         CodecService.getDefault().setId(keys, partId.domain);
         byte[] partIdByte = partId.encode();
+        TransactionType transactionType = vertex.getTask().getTransactionType();
         Iterator<Object[]> local = getLocalStore(
             partId,
             param.getCodec(),
@@ -66,7 +67,7 @@ public final class TxnGetByKeysOperator extends FilterProjectOperator {
             tableId,
             txnId,
             partIdByte,
-            vertex.getTask().getTransactionType());
+            transactionType);
         if (local != null) {
             profile.time(start);
             return local;
@@ -76,7 +77,10 @@ public final class TxnGetByKeysOperator extends FilterProjectOperator {
         KeyValue keyValue = store.txnGet(param.getScanTs(), keys, param.getTimeOut());
         if (keyValue == null || keyValue.getValue() == null) {
             profile.time(start);
-            if (vertex.getTask().getTransactionType() == TransactionType.PESSIMISTIC && !param.isSelect()) {
+            if (transactionType == TransactionType.PESSIMISTIC && !param.isSelect()) {
+                return Collections.singletonList(tuple).iterator();
+            } else if (transactionType == TransactionType.OPTIMISTIC && param.isSelect() && param.isForUpdate()) {
+                context.setShow(false);
                 return Collections.singletonList(tuple).iterator();
             } else {
                 return Collections.emptyIterator();

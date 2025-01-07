@@ -26,6 +26,7 @@ import io.dingodb.calcite.rel.DingoDiskAnnStatus;
 import io.dingodb.calcite.rel.DingoDocument;
 import io.dingodb.calcite.rel.DingoExportData;
 import io.dingodb.calcite.rel.DingoFilter;
+import io.dingodb.calcite.rel.DingoForUpdate;
 import io.dingodb.calcite.rel.DingoFunctionScan;
 import io.dingodb.calcite.rel.DingoGetByIndex;
 import io.dingodb.calcite.rel.DingoGetByIndexMerge;
@@ -392,6 +393,16 @@ public class DingoExplainVisitor implements DingoRelVisitor<Explain> {
         );
         explain1.getChildren().add(explain);
         return explain1;
+    }
+
+    @Override
+    public Explain visit(@NonNull DingoForUpdate rel) {
+        String filter = "";
+        String tableNames = "";
+        return new Explain(
+            "dingoForUpdate", rel.getRowCount(), "root",
+            tableNames, filter
+        );
     }
 
     @Override

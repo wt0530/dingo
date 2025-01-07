@@ -350,6 +350,7 @@ public final class DingoDriverParser extends DingoParser {
             io.dingodb.calcite.grammar.dql.SqlSelect sqlSelect = (io.dingodb.calcite.grammar.dql.SqlSelect) sqlNode;
             pointTs = sqlSelect.getPointStartTs();
         }
+        boolean forUpdate = forUpdate(sqlNode);
 
         long startTs;
         CommonId txnId;
@@ -516,7 +517,8 @@ public final class DingoDriverParser extends DingoParser {
             transaction.getType() == NONE ? null : connection.getTransaction(),
             sqlNode.getKind(),
             new ExecuteVariables(isJoinConcurrency(), getConcurrencyLevel(), isInsertCheckInplace()),
-            pointTs
+            pointTs,
+            forUpdate
         );
         if (explain != null) {
             statementType = Meta.StatementType.CALL;
@@ -780,11 +782,12 @@ public final class DingoDriverParser extends DingoParser {
         ExecuteVariables executeVariables
     ) {
         Integer retry = Optional.mapOrGet(DingoConfiguration.instance().find("retry", int.class), __ -> __, () -> 30);
+        boolean forUpdate = forUpdate(sqlNode);
         while (retry-- > 0) {
             Job job = jobManager.createJob(transaction.getStartTs(), jobSeqId, transaction.getTxnId(), dingoType);
             DingoJobVisitor.renderJob(
                 jobManager, job, relNode, currentLocation, true,
-                transaction, sqlNode.getKind(), executeVariables
+                transaction, sqlNode.getKind(), executeVariables, 0, forUpdate
             );
             try {
                 Iterator<Object[]> iterator = jobManager.createIterator(job, null);

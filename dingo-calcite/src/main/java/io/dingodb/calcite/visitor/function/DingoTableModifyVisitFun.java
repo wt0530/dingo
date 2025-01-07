@@ -67,7 +67,7 @@ public final class DingoTableModifyVisitFun {
     }
 
     public static Collection<Vertex> visit(Job job, IdGenerator idGenerator, Location currentLocation,
-                                           ITransaction transaction, DingoJobVisitor visitor, DingoTableModify rel
+                                           ITransaction transaction, DingoJobVisitor visitor, DingoTableModify rel, boolean forUpdate
     ) {
         Collection<Vertex> inputs = dingo(rel.getInput()).accept(visitor);
         List<Vertex> outputs = new LinkedList<>();
@@ -114,7 +114,8 @@ public final class DingoTableModifyVisitFun {
                                     isScan,
                                     "insert",
                                     td,
-                                    isUpdate
+                                    isUpdate,
+                                    forUpdate
                                 );
                                 lockVertex = new Vertex(PESSIMISTIC_LOCK, pessimisticLockParam);
                             } else {
@@ -238,7 +239,8 @@ public final class DingoTableModifyVisitFun {
                                     isScan,
                                     "update",
                                     td,
-                                    false
+                                    false,
+                                    forUpdate
                                 );
                                 lockVertex = new Vertex(PESSIMISTIC_LOCK, pessimisticLockParam);
                             } else {
@@ -375,7 +377,8 @@ public final class DingoTableModifyVisitFun {
                                     isScan,
                                     "delete",
                                     td,
-                                    false
+                                    false,
+                                    forUpdate
                                 );
                                 lockVertex = new Vertex(PESSIMISTIC_LOCK, pessimisticLockParam);
                             } else {

@@ -39,6 +39,8 @@ public class Context {
     private AtomicBoolean updateResidualDeleteKey = new AtomicBoolean(false);
 
     private boolean isDuplicateKey;
+    // OPTIMISTIC select... for update
+    private boolean isShow;
 
     public Context setPin(int pin) {
         this.pin = pin;

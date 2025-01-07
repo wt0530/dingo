@@ -429,6 +429,13 @@ public class PessimisticLockUpdateOperator extends SoleOutOperator {
                     vertex.getOutList().forEach(o -> o.transformToNext(context, result));
                     return true;
                 } else {
+                    // delete for update lock
+                    byte[] rollBackKey = ByteUtils.getKeyByOp(
+                        CommonId.CommonType.TXN_CACHE_RESIDUAL_LOCK, Op.LOCK, dataKey
+                    );
+                    if (localStore.get(rollBackKey) != null) {
+                        localStore.delete(rollBackKey);
+                    }
                     if (context.getIndexId() != null) {
                         LogUtils.debug(log,
                             "{}, repeat primary key :{} keyValue is not null, index is not null", txnId,

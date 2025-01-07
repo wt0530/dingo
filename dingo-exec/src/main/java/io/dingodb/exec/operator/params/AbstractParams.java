@@ -122,7 +122,8 @@ import lombok.Setter;
     @JsonSubTypes.Type(DocumentPreFilterParam.class),
     @JsonSubTypes.Type(TxnDiskAnnStatusParam.class),
     @JsonSubTypes.Type(TxnDiskAnnCountMemoryParam.class),
-    @JsonSubTypes.Type(TxnDiskAnnResetParam.class)
+    @JsonSubTypes.Type(TxnDiskAnnResetParam.class),
+    @JsonSubTypes.Type(ForUpdateParam.class)
 })
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public abstract class AbstractParams {
