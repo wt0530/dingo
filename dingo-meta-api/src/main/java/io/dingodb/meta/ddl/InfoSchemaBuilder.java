@@ -188,6 +188,7 @@ public class InfoSchemaBuilder {
             case ActionDropColumn:
                 return applyDropColumn(schemaDiff);
             case ActionAddColumn:
+            case ActionAddMultiColumn:
                 return applyAddColumn(schemaDiff);
             case ActionRecoverTable:
                 return applyRecoverTable(schemaDiff);
@@ -329,7 +330,9 @@ public class InfoSchemaBuilder {
             );
             if (is.sortedTablesBuckets.containsKey(idx)) {
                 List<TableInfoCache> buckets = is.sortedTablesBuckets.get(idx);
-                buckets.add(tmp);
+                if (!buckets.contains(tmp)) {
+                    buckets.add(tmp);
+                }
             } else {
                 List<TableInfoCache> buckets = new ArrayList<>();
                 buckets.add(tmp);
