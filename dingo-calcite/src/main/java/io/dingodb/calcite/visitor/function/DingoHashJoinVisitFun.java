@@ -71,27 +71,33 @@ public class DingoHashJoinVisitFun {
         SqlExpr otherCondition = null;
         RelOp relOp = null;
         DingoType dingoType = null;
+
+        // Always build left/right schemas for spill-to-disk support
+        List<DingoType> leftTypeList = rel.getLeft().getRowType().getFieldList().stream()
+            .map(ty -> DingoTypeFactory.INSTANCE.fromName(
+                ty.getType().getSqlTypeName().getName(), null, ty.getType().isNullable()))
+            .collect(Collectors.toList());
+        List<DingoType> rightTypeList = rel.getRight().getRowType().getFieldList().stream()
+            .map(ty -> DingoTypeFactory.INSTANCE.fromName(
+                ty.getType().getSqlTypeName().getName(), null, ty.getType().isNullable()))
+            .collect(Collectors.toList());
+        DingoType leftSchema = DingoTypeFactory.tuple(leftTypeList.toArray(new DingoType[0]));
+        DingoType rightSchema = DingoTypeFactory.tuple(rightTypeList.toArray(new DingoType[0]));
+
         if (!joinInfo.nonEquiConditions.isEmpty()) {
             RexNode nonEquiCondition = RexUtil.composeConjunction(
                 rel.getCluster().getRexBuilder(), joinInfo.nonEquiConditions, true);
             if (nonEquiCondition != null) {
-                // otherCondition = SqlExprUtils.toSqlExpr(nonEquiCondition);
-                List<DingoType> leftTypeName = rel.getLeft().getRowType().getFieldList().stream()
-                    .map(ty -> DingoTypeFactory.INSTANCE.fromName(ty.getType().getSqlTypeName().getName(), null, ty.getType().isNullable()))
-                    .collect(Collectors.toList());
-                List<DingoType> rightTypeName = rel.getRight().getRowType().getFieldList().stream()
-                    .map(ty -> DingoTypeFactory.INSTANCE.fromName(ty.getType().getSqlTypeName().getName(), null, ty.getType().isNullable()))
-                    .collect(Collectors.toList());
-                leftTypeName.addAll(rightTypeName);
-                DingoType[] dingoTypes = new DingoType[leftTypeName.size()];
-                for (int i = 0; i < dingoTypes.length; i ++) {
-                    DingoType tmp = leftTypeName.get(i);
+                List<DingoType> combinedTypes = new ArrayList<>(leftTypeList);
+                combinedTypes.addAll(rightTypeList);
+                DingoType[] dingoTypes = new DingoType[combinedTypes.size()];
+                for (int i = 0; i < dingoTypes.length; i++) {
+                    DingoType tmp = combinedTypes.get(i);
                     tmp.setId(i);
                     dingoTypes[i] = tmp;
                 }
                 dingoType = DingoTypeFactory.tuple(dingoTypes);
                 relOp = RelOpBuilder.builder().project(new Expr[]{RexConverter.convert(nonEquiCondition)}).build();
-                // otherCondition.compileIn(dingoType, null);
             }
         }
 
@@ -123,6 +129,8 @@ public class DingoHashJoinVisitFun {
             param.setOtherExpr(otherCondition);
             param.setRelOp(relOp);
             param.setSchema(dingoType);
+            param.setLeftSchema(leftSchema);
+            param.setRightSchema(rightSchema);
             Vertex vertex = new Vertex(HASH_JOIN, param);
             vertex.setId(idGenerator.getOperatorId(taskId));
             left.setPin(0);

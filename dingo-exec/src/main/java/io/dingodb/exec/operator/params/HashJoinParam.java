@@ -33,17 +33,21 @@ import io.dingodb.exec.expr.DingoRelConfig;
 import io.dingodb.exec.expr.SqlExpr;
 import io.dingodb.exec.memory.OperatorMemoryAllocatorCtx;
 import io.dingodb.exec.operator.data.TupleWithJoinFlag;
+import io.dingodb.exec.operator.spill.SpillManager;
+import io.dingodb.exec.operator.spill.TupleSpillFile;
 import io.dingodb.exec.tuple.TupleKey;
 import io.dingodb.expr.common.type.TupleType;
 import io.dingodb.expr.rel.RelOp;
-import io.dingodb.tool.api.MemoryAllocatorCtx;
 import lombok.Getter;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -54,6 +58,11 @@ import java.util.concurrent.atomic.AtomicLong;
 @JsonTypeName("hashJoin")
 @JsonPropertyOrder({"joinType", "leftMapping", "rightMapping"})
 public class HashJoinParam extends AbstractParams implements RevokerParams {
+
+    // -------------------------------------------------------------------------
+    // Spill partition configuration
+    // -------------------------------------------------------------------------
+    public static final int NUM_PARTITIONS = 32;
 
     @JsonProperty("leftMapping")
     private final TupleMapping leftMapping;
@@ -102,6 +111,28 @@ public class HashJoinParam extends AbstractParams implements RevokerParams {
     protected long spillCnt = 0;
     OperatorMemoryAllocatorCtx memoryAllocatorCtx;
     AtomicLong size;
+    /** Total number of tuples added to the build side (for spill threshold comparison). */
+    private final AtomicLong tupleCount = new AtomicLong(0);
+    private transient String jobId;
+    private transient String operatorId;
+
+    // -------------------------------------------------------------------------
+    // Spill-to-disk state
+    // -------------------------------------------------------------------------
+    /** Left-side tuple schema for Avro serialization. */
+    @Setter
+    private DingoType leftSchema;
+    /** Right-side tuple schema for Avro serialization. */
+    @Setter
+    private DingoType rightSchema;
+    /** Which partitions have been spilled to disk. */
+    private transient boolean[] spilledPartitions;
+    /** Right-side spill files, one per spilled partition. */
+    @Getter
+    private transient TupleSpillFile[] rightSpillFiles;
+    /** Left-side spill files, one per spilled partition. */
+    @Getter
+    private transient TupleSpillFile[] leftSpillFiles;
 
 
     public HashJoinParam(
@@ -184,6 +215,8 @@ public class HashJoinParam extends AbstractParams implements RevokerParams {
 
     @Override
     public void init(Vertex vertex) {
+        this.jobId =  vertex == null ? "hashJoinJobId" : vertex.getTask().getJobId().toString();
+        this.operatorId = vertex == null ? "hashJoinOpId" : vertex.getOp().toString();
         rightFinFlag = false;
         hashMap = new ConcurrentHashMap<>();
         future = new CompletableFuture<>();
@@ -200,6 +233,10 @@ public class HashJoinParam extends AbstractParams implements RevokerParams {
                 MemoryPoolUtils.createOperatorTmpTablePool(name, executionContext.getMemoryPool());
             this.memoryAllocatorCtx = new OperatorMemoryAllocatorCtx(memoryPool, ScopeVariables.enableSpill());
         }
+        // Initialize spill partition arrays
+        spilledPartitions = new boolean[NUM_PARTITIONS];
+        rightSpillFiles = new TupleSpillFile[NUM_PARTITIONS];
+        leftSpillFiles = new TupleSpillFile[NUM_PARTITIONS];
     }
 
     public void clear() {
@@ -209,6 +246,24 @@ public class HashJoinParam extends AbstractParams implements RevokerParams {
         if (this.memoryAllocatorCtx != null) {
             this.memoryAllocatorCtx.close();
         }
+        // Clean up spill files
+        if (rightSpillFiles != null) {
+            for (TupleSpillFile sf : rightSpillFiles) {
+                if (sf != null) {
+                    sf.close();
+                }
+            }
+            rightSpillFiles = null;
+        }
+        if (leftSpillFiles != null) {
+            for (TupleSpillFile sf : leftSpillFiles) {
+                if (sf != null) {
+                    sf.close();
+                }
+            }
+            leftSpillFiles = null;
+        }
+        spilledPartitions = null;
     }
 
     public void interrupt() {
@@ -233,11 +288,124 @@ public class HashJoinParam extends AbstractParams implements RevokerParams {
         this.size.addAndGet(size);
     }
 
+    /** Returns the total number of tuples added to the build side. */
+    public long getTupleCount() {
+        return tupleCount.get();
+    }
+
+    /** Increments the build-side tuple count by one. */
+    public void incrementTupleCount() {
+        tupleCount.incrementAndGet();
+    }
+
     @Override
     public MemoryPool getQueryMemoryPool() {
         if (this.memoryAllocatorCtx != null) {
             return this.getExecutionContext().getMemoryPool();
         }
         return null;
+    }
+
+    // -------------------------------------------------------------------------
+    // Spill-to-disk methods
+    // -------------------------------------------------------------------------
+
+    /** Returns whether spill-to-disk is enabled (both left and right schemas available). */
+    public boolean isSpillEnabled() {
+        return leftSchema != null && rightSchema != null;
+    }
+
+    /** Computes partition index for a given join key. */
+    public int partitionOf(TupleKey key) {
+        return Math.abs(key.hashCode()) % NUM_PARTITIONS;
+    }
+
+    /** Returns whether a specific partition has been spilled. */
+    public boolean isPartitionSpilled(int partition) {
+        return spilledPartitions != null && spilledPartitions[partition];
+    }
+
+    /** Returns whether any partition has been spilled to disk. */
+    public boolean hasSpilledPartitions() {
+        if (spilledPartitions == null) {
+            return false;
+        }
+        for (boolean spilled : spilledPartitions) {
+            if (spilled) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Spills all current hashMap entries to disk, partitioned by key hash.
+     * Entries are removed from hashMap after writing. Right spill files are kept
+     * open for potential append from subsequent right tuples.
+     *
+     * @throws IOException if spill files cannot be created or written
+     */
+    public synchronized void spillPartitions() throws IOException {
+        if (!isSpillEnabled() || hashMap.isEmpty()) {
+            return;
+        }
+        // Write each hashMap entry to its corresponding partition's right spill file
+        for (Map.Entry<TupleKey, List<TupleWithJoinFlag>> entry : hashMap.entrySet()) {
+            TupleKey key = entry.getKey();
+            int p = partitionOf(key);
+            if (rightSpillFiles[p] == null) {
+                rightSpillFiles[p] = new TupleSpillFile(
+                    SpillManager.INSTANCE.createSpillFile(jobId, operatorId), rightSchema);
+            }
+            List<Object[]> tuples = new ArrayList<>(entry.getValue().size());
+            for (TupleWithJoinFlag twjf : entry.getValue()) {
+                tuples.add(twjf.getTuple());
+            }
+            rightSpillFiles[p].write(tuples);
+            spilledPartitions[p] = true;
+        }
+        long spilledSize = hashMap.size();
+        hashMap.clear();
+        tupleCount.set(0);
+        LogUtils.debug(log, "Spilled {} hash groups across partitions", spilledSize);
+    }
+
+    /**
+     * Writes a right-side tuple directly to a spilled partition's file.
+     * Called when a new right tuple arrives for an already-spilled partition.
+     */
+    public synchronized void spillRightTuple(int partition, Object[] tuple) throws IOException {
+        if (rightSpillFiles[partition] == null) {
+            rightSpillFiles[partition] = new TupleSpillFile(
+                SpillManager.INSTANCE.createSpillFile(jobId, operatorId), rightSchema);
+            spilledPartitions[partition] = true;
+        }
+        rightSpillFiles[partition].write(Collections.singletonList(tuple));
+    }
+
+    /**
+     * Writes a left-side tuple to a spilled partition's file for later processing.
+     */
+    public synchronized void spillLeftTuple(int partition, Object[] tuple) throws IOException {
+        if (leftSpillFiles[partition] == null) {
+            leftSpillFiles[partition] = new TupleSpillFile(
+                SpillManager.INSTANCE.createSpillFile(jobId, operatorId), leftSchema);
+        }
+        leftSpillFiles[partition].write(Collections.singletonList(tuple));
+    }
+
+    /**
+     * Finalizes all open right spill files. Called in fin(pin=1) after all right
+     * tuples have been received, before signaling right completion.
+     */
+    public synchronized void finishRightSpillFiles() throws IOException {
+        if (rightSpillFiles == null) {
+            return;
+        }
+        for (TupleSpillFile sf : rightSpillFiles) {
+            if (sf != null) {
+                sf.finishWrite();
+            }
+        }
     }
 }

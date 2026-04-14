@@ -38,7 +38,6 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.LinkedList;
 import java.util.List;
-
 public class AvroTupleCodec implements TupleCodec {
     private static final ThreadLocal<BinaryDecoder> decoderLocal = ThreadLocal.withInitial(() -> null);
     private static final ThreadLocal<BinaryEncoder> encoderLocal = ThreadLocal.withInitial(() -> null);
@@ -106,5 +105,34 @@ public class AvroTupleCodec implements TupleCodec {
             record = decodeBytes(is, record, reader);
         }
         return tuples;
+    }
+
+    /**
+     * Decodes exactly one tuple from the given {@link BinaryDecoder}.
+     *
+     * <p>This method is designed for lazy / streaming reads (e.g., spill-file merge iterators).
+     * The caller is responsible for creating and reusing the {@link BinaryDecoder} instance
+     * across successive calls to preserve Avro binary framing state.
+     *
+     * @param decoder the Avro binary decoder to read from
+     * @return the decoded tuple, or {@code null} if the end of stream has been reached
+     * @throws IOException if an I/O error occurs (other than EOF)
+     */
+    public @Nullable Object[] decodeOne(@NonNull BinaryDecoder decoder) throws IOException {
+        GenericRecord record;
+        try {
+            record = reader.read(null, decoder);
+        } catch (EOFException e) {
+            return null;
+        }
+        if (record == null) {
+            return null;
+        }
+        int size = schema.getFields().size();
+        Object[] tuple = new Object[size];
+        for (int i = 0; i < size; ++i) {
+            tuple[i] = record.get(i);
+        }
+        return (Object[]) type.convertFrom(tuple, AvroDataConverter.INSTANCE);
     }
 }

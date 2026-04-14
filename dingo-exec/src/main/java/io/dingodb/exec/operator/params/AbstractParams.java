@@ -154,6 +154,9 @@ public abstract class AbstractParams {
 
     protected transient Profile profile;
 
+    /** Row count for DML operations (INSERT/UPDATE/DELETE). Incremented per affected row. */
+    protected final AtomicLong cnt = new AtomicLong(0);
+
     public AbstractParams() {
     }
 
@@ -199,5 +202,15 @@ public abstract class AbstractParams {
             profile.start();
         }
         return (SourceProfile) profile;
+    }
+
+    /** Increments and returns the row count. Used by DML operators to track affected rows. */
+    public long getCount() {
+        return cnt.incrementAndGet();
+    }
+
+    /** Returns the current row count without incrementing. */
+    public long getCnt() {
+        return cnt.get();
     }
 }

@@ -25,7 +25,6 @@ import io.dingodb.common.mysql.scope.ScopeVariables;
 import io.dingodb.common.profile.OperatorProfile;
 import io.dingodb.common.profile.Profile;
 import io.dingodb.common.type.TupleMapping;
-import io.dingodb.common.util.Utils;
 import io.dingodb.exec.base.Status;
 import io.dingodb.exec.dag.Edge;
 import io.dingodb.exec.dag.Vertex;
@@ -37,16 +36,21 @@ import io.dingodb.exec.operator.data.Context;
 import io.dingodb.exec.operator.data.TupleWithJoinFlag;
 import io.dingodb.exec.operator.params.AbstractParams;
 import io.dingodb.exec.operator.params.HashJoinParam;
+import io.dingodb.exec.operator.spill.SpillManager;
+import io.dingodb.exec.operator.spill.TupleSpillFile;
 import io.dingodb.exec.tuple.TupleKey;
 import io.dingodb.expr.rel.PipeOp;
 import io.dingodb.store.api.transaction.exception.LockWaitException;
 import io.dingodb.tool.api.MemoryAllocatorCtx;
-import lombok.extern.java.Log;
 import lombok.extern.slf4j.Slf4j;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
+import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
@@ -70,20 +74,37 @@ public class HashJoinOperator extends SoleOutOperator implements MemoryRevoker {
             boolean leftRequired = param.isLeftRequired();
             int pin = context.getPin();
             param.setContext(context);
-            if (pin == 0) { // left
+            if (pin == 0) { // left (probe side)
                 waitRightFinFlag(param, vertex);
                 OperatorProfile profile = param.getProfile("hashJoin");
                 long start = System.currentTimeMillis();
                 TupleKey leftKey = HashJoinParam.rtrimTupleKey(new TupleKey(leftMapping.revMap(tuple)));
+                // Null-key handling: emit immediately for OUTER joins, skip for INNER
                 if (HashJoinParam.containsNull(leftKey)) {
-                    if ("inner".equalsIgnoreCase(param.getJoinType()) || "right".equalsIgnoreCase(param.getJoinType())) {
+                    if ("inner".equalsIgnoreCase(param.getJoinType())
+                        || "right".equalsIgnoreCase(param.getJoinType())) {
                         return true;
-                    } else if ("left".equalsIgnoreCase(param.getJoinType()) || "full".equalsIgnoreCase(param.getJoinType())) {
+                    } else if ("left".equalsIgnoreCase(param.getJoinType())
+                        || "full".equalsIgnoreCase(param.getJoinType())) {
                         Object[] newTuple = Arrays.copyOf(tuple, leftLength + rightLength);
                         Arrays.fill(newTuple, leftLength, leftLength + rightLength, null);
                         return pushToNext(param, edge, context, newTuple);
                     }
                 }
+                // Spill routing: if this partition was spilled, write left tuple to disk
+                if (param.isSpillEnabled() && param.hasSpilledPartitions()) {
+                    int partition = param.partitionOf(leftKey);
+                    if (param.isPartitionSpilled(partition)) {
+                        try {
+                            param.spillLeftTuple(partition, tuple);
+                        } catch (IOException e) {
+                            throw new RuntimeException(
+                                "Failed to spill left tuple for partition " + partition, e);
+                        }
+                        return true;
+                    }
+                }
+                // In-memory probe (original logic for non-spilled partitions)
                 boolean isEmpty = isEmpty(leftKey, param);
                 if (isEmpty && ("inner".equalsIgnoreCase(param.getJoinType())
                     || "right".equalsIgnoreCase(param.getJoinType()))) {
@@ -113,7 +134,7 @@ public class HashJoinOperator extends SoleOutOperator implements MemoryRevoker {
                     profile.opTime(start);
                     return pushToNext(param, edge, context, newTuple);
                 }
-            } else if (pin == 1) { //right
+            } else if (pin == 1) { // right (build side)
                 if (param.getSize() != null && param.getSize().get() > ScopeVariables.joinSpillSize()
                     && !param.getExecutionContext().isInnerSql()) {
                     param.getMemoryAllocatorCtx().allocateRevocableMemory(param.getSize().get());
@@ -122,15 +143,29 @@ public class HashJoinOperator extends SoleOutOperator implements MemoryRevoker {
                 OperatorProfile profile = param.getProfile("hashJoin");
                 long start = System.currentTimeMillis();
                 TupleKey rightKey = HashJoinParam.rtrimTupleKey(new TupleKey(rightMapping.revMap(tuple)));
+                // If this partition is already spilled, write directly to disk
+                if (param.isSpillEnabled() && param.hasSpilledPartitions()
+                    && param.isPartitionSpilled(param.partitionOf(rightKey))) {
+                    try {
+                        param.spillRightTuple(param.partitionOf(rightKey), tuple);
+                    } catch (IOException e) {
+                        throw new RuntimeException("Failed to spill right tuple to disk", e);
+                    }
+                    profile.cacheOpTime(start);
+                    return true;
+                }
                 if (HashJoinParam.containsNull(rightKey)) {
-                    if ("inner".equalsIgnoreCase(param.getJoinType()) || "left".equalsIgnoreCase(param.getJoinType())) {
+                    if ("inner".equalsIgnoreCase(param.getJoinType())
+                        || "left".equalsIgnoreCase(param.getJoinType())) {
                         return true;
-                    } else if ("right".equalsIgnoreCase(param.getJoinType()) || "full".equalsIgnoreCase(param.getJoinType())) {
+                    } else if ("right".equalsIgnoreCase(param.getJoinType())
+                        || "full".equalsIgnoreCase(param.getJoinType())) {
                         List<TupleWithJoinFlag> list = param.getHashMap()
                             .computeIfAbsent(rightKey, k -> Collections.synchronizedList(new LinkedList<>()));
                         long size = ObjectSizeUtils.calculateSize(tuple);
                         param.incMemSize(size);
                         list.add(new TupleWithJoinFlag(tuple));
+                        param.incrementTupleCount();
                     }
                 } else {
                     if (isEmpty(rightKey, param) && "inner".equalsIgnoreCase(param.getJoinType())) {
@@ -139,9 +174,31 @@ public class HashJoinOperator extends SoleOutOperator implements MemoryRevoker {
                     }
                     long size = ObjectSizeUtils.calculateSize(tuple);
                     param.getSize().addAndGet(size);
+                    // Track revocable memory
+                    if (param.getMemoryAllocatorCtx() != null) {
+                        param.getMemoryAllocatorCtx().allocateRevocableMemory(size);
+                    }
                     List<TupleWithJoinFlag> list = param.getHashMap()
                         .computeIfAbsent(rightKey, k -> Collections.synchronizedList(new LinkedList<>()));
                     list.add(new TupleWithJoinFlag(tuple));
+                    param.incrementTupleCount();
+                }
+                // Check spill condition: threshold or memory revoking requested
+                boolean shouldSpill = param.isSpillEnabled()
+                    && (param.getTupleCount() >= SpillManager.DEFAULT_SPILL_THRESHOLD
+                    || (param.getMemoryAllocatorCtx() != null
+                    && param.getMemoryAllocatorCtx().isMemoryRevokingRequested()));
+                if (shouldSpill) {
+                    try {
+                        param.spillPartitions();
+                        if (param.getMemoryAllocatorCtx() != null) {
+                            param.getMemoryAllocatorCtx().releaseRevocableMemory(
+                                param.getMemoryAllocatorCtx().getRevocableAllocated(), true);
+                            param.getMemoryAllocatorCtx().resetMemoryRevokingRequested();
+                        }
+                    } catch (IOException e) {
+                        throw new RuntimeException("Failed to spill hash join build side", e);
+                    }
                 }
                 profile.cacheOpTime(start);
             }
@@ -174,10 +231,11 @@ public class HashJoinOperator extends SoleOutOperator implements MemoryRevoker {
         boolean rightRequired = param.isRightRequired();
         int leftLength = param.getLeftLength();
         int rightLength = param.getRightLength();
-        if (pin == 0) { // left
+        if (pin == 0) { // left fin
             if (rightRequired) {
                 // should wait in case of no data push to left.
                 waitRightFinFlag(param, vertex);
+                // Emit unmatched right tuples from in-memory hashMap
                 outer:
                 for (List<TupleWithJoinFlag> tList : param.getHashMap().values()) {
                     for (TupleWithJoinFlag t : tList) {
@@ -192,6 +250,10 @@ public class HashJoinOperator extends SoleOutOperator implements MemoryRevoker {
                     }
                 }
             }
+            // Process spilled partitions
+            if (param.hasSpilledPartitions()) {
+                processSpilledPartitions(param, edge, leftLength, rightLength);
+            }
             if (fin instanceof FinWithProfiles) {
                 FinWithProfiles finWithProfiles = (FinWithProfiles) fin;
                 param.setProfileLeft(finWithProfiles.getProfile());
@@ -200,9 +262,6 @@ public class HashJoinOperator extends SoleOutOperator implements MemoryRevoker {
                     profile = param.getProfile("hashJoin");
                 }
                 profile.getChildren().add(param.profileLeft);
-                //if (param.getProfileRight() == null) {
-                //    waitRightFinFlag(param);
-                //}
                 profile.getChildren().add(param.profileRight);
                 profile.end();
                 finWithProfiles.setProfile(profile);
@@ -211,7 +270,15 @@ public class HashJoinOperator extends SoleOutOperator implements MemoryRevoker {
             // Reset
             param.clear();
             checkStatusAndInterrupt(param, vertex);
-        } else if (pin == 1) { //right
+        } else if (pin == 1) { // right fin
+            // Finalize all right spill files before signaling completion
+            if (param.isSpillEnabled()) {
+                try {
+                    param.finishRightSpillFiles();
+                } catch (IOException e) {
+                    throw new RuntimeException("Failed to finalize right spill files", e);
+                }
+            }
             if (fin instanceof FinWithProfiles) {
                 FinWithProfiles finWithProfiles = (FinWithProfiles) fin;
                 param.setProfileRight(finWithProfiles.getProfile());
@@ -220,6 +287,112 @@ public class HashJoinOperator extends SoleOutOperator implements MemoryRevoker {
             param.getFuture().complete(null);
         }
     }
+
+    // -------------------------------------------------------------------------
+    // Spilled partition processing
+    // -------------------------------------------------------------------------
+
+    /**
+     * Processes all spilled partitions: for each partition, loads the right spill file
+     * into a temporary hash map, streams the left spill file and probes against it,
+     * then emits unmatched right tuples for OUTER joins.
+     */
+    private static void processSpilledPartitions(
+        HashJoinParam param, Edge edge, int leftLength, int rightLength
+    ) {
+        boolean leftRequired = param.isLeftRequired();
+        boolean rightRequired = param.isRightRequired();
+        TupleMapping leftMapping = param.getLeftMapping();
+        TupleMapping rightMapping = param.getRightMapping();
+
+        for (int p = 0; p < HashJoinParam.NUM_PARTITIONS; p++) {
+            if (!param.isPartitionSpilled(p)) {
+                continue;
+            }
+            try {
+                // Finish writing left spill file (may still be in write mode)
+                TupleSpillFile leftSf = param.getLeftSpillFiles()[p];
+                TupleSpillFile rightSf = param.getRightSpillFiles()[p];
+                if (leftSf != null) {
+                    leftSf.finishWrite();
+                }
+
+                // Step 1: Load right spill file into temporary hash map
+                if (rightSf != null && rightSf.getTupleCount() > SpillManager.DEFAULT_SPILL_THRESHOLD) {
+                    LogUtils.warn(log, "Spilled partition {} has {} tuples, "
+                        + "may cause memory pressure during rebuild", p, rightSf.getTupleCount());
+                }
+                HashMap<TupleKey, List<TupleWithJoinFlag>> tempMap = new HashMap<>();
+                if (rightSf != null) {
+                    Iterator<Object[]> rightIter = rightSf.iterator();
+                    while (rightIter.hasNext()) {
+                        Object[] rightTuple = rightIter.next();
+                        TupleKey rightKey = HashJoinParam.rtrimTupleKey(
+                            new TupleKey(rightMapping.revMap(rightTuple)));
+                        List<TupleWithJoinFlag> list = tempMap.computeIfAbsent(
+                            rightKey, k -> new ArrayList<>());
+                        list.add(new TupleWithJoinFlag(rightTuple));
+                    }
+                }
+
+                // Step 2: Stream left spill file and probe against temp map
+                if (leftSf != null) {
+                    Iterator<Object[]> leftIter = leftSf.iterator();
+                    while (leftIter.hasNext()) {
+                        Object[] leftTuple = leftIter.next();
+                        TupleKey leftKey = HashJoinParam.rtrimTupleKey(
+                            new TupleKey(leftMapping.revMap(leftTuple)));
+
+                        List<TupleWithJoinFlag> matchedRight = tempMap.get(leftKey);
+                        if (matchedRight != null) {
+                            for (TupleWithJoinFlag t : matchedRight) {
+                                Object[] newTuple = Arrays.copyOf(leftTuple, leftLength + rightLength);
+                                System.arraycopy(t.getTuple(), 0, newTuple, leftLength, rightLength);
+                                t.setJoined(true);
+                                pushToNext(param, edge, param.getContext(), newTuple);
+                            }
+                        } else if (leftRequired) {
+                            // LEFT or FULL join: emit left with null right
+                            Object[] newTuple = Arrays.copyOf(leftTuple, leftLength + rightLength);
+                            Arrays.fill(newTuple, leftLength, leftLength + rightLength, null);
+                            pushToNext(param, edge, param.getContext(), newTuple);
+                        }
+                    }
+                }
+
+                // Step 3: For RIGHT/FULL join: emit unmatched right tuples
+                if (rightRequired) {
+                    for (List<TupleWithJoinFlag> tList : tempMap.values()) {
+                        for (TupleWithJoinFlag t : tList) {
+                            if (!t.isJoined()) {
+                                Object[] newTuple = new Object[leftLength + rightLength];
+                                Arrays.fill(newTuple, 0, leftLength, null);
+                                System.arraycopy(t.getTuple(), 0, newTuple, leftLength, rightLength);
+                                pushToNext(param, edge, param.getContext(), newTuple);
+                            }
+                        }
+                    }
+                }
+
+                // Step 4: Clean up this partition's spill files
+                if (rightSf != null) {
+                    rightSf.close();
+                }
+                if (leftSf != null) {
+                    leftSf.close();
+                }
+                tempMap.clear();
+
+                LogUtils.debug(log, "Processed spilled partition {}", p);
+            } catch (IOException e) {
+                throw new RuntimeException("Failed to process spilled partition " + p, e);
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Existing helper methods
+    // -------------------------------------------------------------------------
 
     private static void waitRightFinFlag(HashJoinParam param, Vertex vertex) {
         checkStatusError(param, vertex);
@@ -305,6 +478,10 @@ public class HashJoinOperator extends SoleOutOperator implements MemoryRevoker {
         return true;
     }
 
+    // -------------------------------------------------------------------------
+    // MemoryRevoker interface implementation
+    // -------------------------------------------------------------------------
+
     @Override
     public ListenableFuture<?> startMemoryRevoke(AbstractParams param) {
         HashJoinParam hashJoinParam = (HashJoinParam) param;
@@ -314,11 +491,11 @@ public class HashJoinOperator extends SoleOutOperator implements MemoryRevoker {
 
     @Override
     public void finishMemoryRevoke(AbstractParams param) {
-        // finish -> releaseMemory
         HashJoinParam hashJoinParam = (HashJoinParam) param;
         MemoryAllocatorCtx memoryAllocatorCtx = hashJoinParam.getMemoryAllocatorCtx();
         memoryAllocatorCtx.releaseRevocableMemory(memoryAllocatorCtx.getRevocableAllocated(), true);
-        LogUtils.info(log, "finish memory revoke, release revocable memory");
+        memoryAllocatorCtx.resetMemoryRevokingRequested();
+        LogUtils.info(log, "HashJoinOperator finished memory revoke, released revocable memory");
     }
 
     @Override
@@ -327,13 +504,20 @@ public class HashJoinOperator extends SoleOutOperator implements MemoryRevoker {
         return hashJoinParam.getMemoryAllocatorCtx();
     }
 
-    public ListenableFuture<?> spillToDisk(AbstractParams param) {
-        LogUtils.info(log, "start spill to disk");
+    private ListenableFuture<?> spillToDisk(HashJoinParam hashJoinParam) {
+        LogUtils.info(log, "HashJoinOperator start spill to disk, hashMap size: {}",
+            hashJoinParam.getHashMap().size());
         SettableFuture<?> future = SettableFuture.create();
-        new Thread(() -> {
-            Utils.sleep(10000);
-            future.set(null);
-        }).start();
+        SpillManager.getSpillExecutor().execute(() -> {
+            try {
+                hashJoinParam.spillPartitions();
+                LogUtils.info(log, "HashJoinOperator spilled partitions during memory revocation");
+                future.set(null);
+            } catch (IOException e) {
+                LogUtils.warn(log, "HashJoinOperator failed to spill: {}", e.getMessage());
+                future.setException(e);
+            }
+        });
         return future;
     }
 }

@@ -22,6 +22,9 @@ common:
     gcSafePointPeriod: 300
     gcDeleteRegionPeriod: 60
     enableGcSdkRegion: true
+spill:
+    dir: /tmp/dingo-spill  # It is recommended to put SSD
+    threshold: 100000      # Adjust according to memory size
 store:
     bufferSize: 67108864
     bufferNumber: 2

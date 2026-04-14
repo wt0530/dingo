@@ -24,6 +24,7 @@ import io.dingodb.exec.tuple.TupleKey;
 import lombok.extern.slf4j.Slf4j;
 import org.checkerframework.checker.nullness.qual.NonNull;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Iterator;
@@ -88,6 +89,27 @@ public class AggCache implements Iterable<Object[]> {
             cache.entrySet().iterator(),
             e -> ArrayUtils.concat(e.getKey().getTuple(), calValue(e.getValue()))
         );
+    }
+
+    /** Returns the number of distinct group keys currently held. */
+    public int size() {
+        return cache.size();
+    }
+
+    /**
+     * Drains all entries from the cache as {@code [key_cols, agg_state_values]} tuples
+     * suitable for spilling to disk. The cache is cleared after draining.
+     * These tuples can later be merged back via {@link #reduce(Object[])}.
+     *
+     * @return list of partially-aggregated tuples
+     */
+    public List<Object[]> drainEntries() {
+        List<Object[]> entries = new ArrayList<>(cache.size());
+        for (Map.Entry<TupleKey, Object[]> e : cache.entrySet()) {
+            entries.add(ArrayUtils.concat(e.getKey().getTuple(), e.getValue()));
+        }
+        cache.clear();
+        return entries;
     }
 
     public void clear() {

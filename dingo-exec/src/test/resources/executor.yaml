@@ -1,0 +1,45 @@
+cluster:
+  name: dingo
+exchange:
+  host: localhost
+  port: 8765
+server:
+  coordinators: coordinator:12321
+  user: user
+  keyring: keyring
+  resourceTag: 1
+  mysqlPort: 3307
+variable:
+  autoIncrementCacheCount: 10000
+  autoIncrementIncrement: 1
+  autoIncrementOffset: 1
+  enableTableLock: true
+  lowerCaseTableNames: 2
+common:
+  scheduledCoreThreads: 16
+  lockCoreThreads: 0
+  globalCoreThreads: 0
+  gcSafePointPeriod: 300
+  gcDeleteRegionPeriod: 60
+  enableGcSdkRegion: true
+spill:
+  dir: /tmp/dingo-spill  # It is recommended to put SSD
+  threshold: 100000      # Adjust according to memory size
+store:
+  bufferSize: 67108864
+  bufferNumber: 2
+  fileSize: 67108864
+  path: /opt/dingo/localStore
+security:
+  ldap:
+    ldapHost: ldap
+    ldapPort: 389
+    bindDN: cn=admin,dc=localdomain,dc=com
+    password: 123456
+    baseDN: dc=localdomain,dc=com
+  cipher:
+    keyPath: /opt/dingo/conf/dingodb.jks
+    keyPass: dingodb
+    storePass: dingodb
+    alias: dingodb
+    issuer: dingo
